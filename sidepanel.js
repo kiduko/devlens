@@ -245,7 +245,7 @@ function renderImageInfo(data) {
 
     // Detail signals
     for (const sig of ai.signals) {
-      if (sig.type === 'c2pa') continue; // already shown above
+      if (sig.type === 'c2pa') continue;
       const tag = document.createElement('div');
       const level = sig.isAI || sig.tool ? 'warn' : 'detail';
       tag.className = `access-tag ${level}`;
