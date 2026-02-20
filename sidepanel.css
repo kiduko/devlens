@@ -938,3 +938,17 @@ kbd {
 
 .setting-select:focus { border-color: var(--accent); }
 .setting-select option { background: var(--bg-card); color: var(--text); }
+
+/* Folder Preview */
+.folder-preview-item { border-bottom: none !important; }
+.folder-preview {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  padding: 3px 7px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-top: 2px;
+  word-break: break-all;
+}

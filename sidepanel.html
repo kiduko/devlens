@@ -22,6 +22,11 @@
           <path d="M9 4v6l-2 4h10l-2-4V4"/><line x1="12" y1="16" x2="12" y2="21"/><line x1="8" y1="4" x2="16" y2="4"/>
         </svg>
       </button>
+      <button class="settings-btn" id="btnGallery" title="갤러리">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+        </svg>
+      </button>
       <button class="settings-btn" id="btnPopout" title="별도 창으로 열기">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -85,6 +90,32 @@
             <option value="png">PNG로 변환</option>
             <option value="jpg">JPG로 변환</option>
           </select>
+        </div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">저장 폴더 구조</span>
+            <span class="setting-desc">자동 저장 시 하위 폴더 생성 방식</span>
+          </div>
+          <select class="setting-select" id="folderMode">
+            <option value="none">없음</option>
+            <option value="date">날짜별</option>
+            <option value="site">사이트별</option>
+            <option value="date-site">날짜 > 사이트</option>
+            <option value="site-date">사이트 > 날짜</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">루트 폴더</span>
+            <span class="setting-desc">다운로드 폴더 내 루트 폴더명</span>
+          </div>
+          <input type="text" class="setting-input" id="rootFolder" value="DevLens" placeholder="DevLens">
+        </div>
+        <div class="setting-item folder-preview-item">
+          <div class="setting-info">
+            <span class="setting-label">경로 미리보기</span>
+            <span class="setting-desc folder-preview" id="folderPreview">DevLens/devlens_image.jpg</span>
+          </div>
         </div>
       </div>
     </div>

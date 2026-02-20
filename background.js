@@ -624,6 +624,13 @@ async function downloadVideo(srcUrl, filename) {
 // ── Download Image ──
 
 async function downloadImage(url, filename, saveAs = true) {
+  // Get pageUrl for metadata recording
+  let pageUrl = '';
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab?.url) pageUrl = activeTab.url;
+  } catch (_) {}
+
   try {
     // Fetch with credentials to handle auth-required images
     const response = await fetch(url, { credentials: 'include' });
@@ -645,9 +652,20 @@ async function downloadImage(url, filename, saveAs = true) {
       cleanName += extMap[ct] || '.png';
     }
 
-    chrome.downloads.download({ url: dataUrl, filename: cleanName, saveAs }, (id) => {
+    chrome.downloads.download({ url: dataUrl, filename: cleanName, saveAs }, (downloadId) => {
       if (chrome.runtime.lastError) {
         chrome.downloads.download({ url: dataUrl, saveAs });
+      } else if (downloadId) {
+        recordDownload({
+          downloadId,
+          sourceUrl: url,
+          pageUrl,
+          hostname: extractHostname(pageUrl),
+          filename: cleanName,
+          contentType: ct,
+          fileSize: buffer.byteLength,
+          timestamp: Date.now(),
+        });
       }
     });
   } catch (err) {
@@ -663,9 +681,24 @@ async function downloadImage(url, filename, saveAs = true) {
 
 chrome.downloads.onChanged.addListener((delta) => {
   if (delta.state && delta.state.current === 'complete') {
-    chrome.downloads.search({ id: delta.id }, (results) => {
-      if (results && results[0] && results[0].filename) {
-        sendToPanel({ action: 'downloadComplete', path: results[0].filename });
+    chrome.downloads.search({ id: delta.id }, async (results) => {
+      if (results && results[0]) {
+        const item = results[0];
+        if (item.filename) {
+          sendToPanel({ action: 'downloadComplete', path: item.filename });
+        }
+        // Update fileSize in download metadata
+        if (item.fileSize > 0) {
+          try {
+            const stored = await chrome.storage.local.get('devlensDownloads');
+            const downloads = stored.devlensDownloads || [];
+            const entry = downloads.find(d => d.downloadId === delta.id);
+            if (entry) {
+              entry.fileSize = item.fileSize;
+              await chrome.storage.local.set({ devlensDownloads: downloads });
+            }
+          } catch (_) { /* silent */ }
+        }
       }
     });
   }
@@ -823,7 +856,7 @@ async function processImage(url, pageInfo) {
     });
 
     // Auto-save after sending data to panel
-    await tryAutoSave(url, contentType);
+    await tryAutoSave(url, contentType, pageUrl);
   } catch (err) {
     sendToPanel({ action: 'imageError', src: url, error: err.message });
   }
@@ -902,6 +935,9 @@ async function processVideo(videoInfo) {
   }
 
   sendToPanel({ action: 'videoData', data });
+
+  // Auto-save video after sending data to panel
+  await tryAutoSaveVideo(data, pageUrl);
 }
 
 function formatDuration(sec) {
@@ -1051,7 +1087,40 @@ chrome.windows.onRemoved.addListener((windowId) => {
 
 // ── Auto-Save ──
 
-async function tryAutoSave(url, contentType) {
+// ── Download Metadata ──
+
+const MAX_DOWNLOAD_RECORDS = 500;
+
+async function recordDownload(entry) {
+  try {
+    const result = await chrome.storage.local.get('devlensDownloads');
+    const downloads = result.devlensDownloads || [];
+    downloads.unshift(entry);
+    if (downloads.length > MAX_DOWNLOAD_RECORDS) downloads.length = MAX_DOWNLOAD_RECORDS;
+    await chrome.storage.local.set({ devlensDownloads: downloads });
+  } catch (_) { /* silent */ }
+}
+
+function extractHostname(pageUrl) {
+  try {
+    return new URL(pageUrl).hostname.replace(/^www\./, '');
+  } catch { return 'unknown'; }
+}
+
+function buildSubfolderPath(folderMode, rootFolder, pageUrl) {
+  const root = (rootFolder || 'DevLens').replace(/[<>:"|?*]/g, '_');
+  if (folderMode === 'none' || !folderMode) return root;
+  const today = new Date().toISOString().slice(0, 10);
+  const site = extractHostname(pageUrl || '');
+  const parts = [root];
+  if (folderMode === 'date') parts.push(today);
+  else if (folderMode === 'site') parts.push(site);
+  else if (folderMode === 'date-site') { parts.push(today); parts.push(site); }
+  else if (folderMode === 'site-date') { parts.push(site); parts.push(today); }
+  return parts.join('/');
+}
+
+async function tryAutoSave(url, contentType, pageUrl) {
   try {
     const result = await chrome.storage.local.get('devlensSettings');
     const settings = result.devlensSettings;
@@ -1059,6 +1128,8 @@ async function tryAutoSave(url, contentType) {
 
     const prefix = settings.filePrefix || 'devlens_';
     const format = settings.saveFormat || 'original';
+    const folderMode = settings.folderMode || 'none';
+    const rootFolder = settings.rootFolder || 'DevLens';
 
     // Extract original filename parts
     let baseName = 'image';
@@ -1076,10 +1147,12 @@ async function tryAutoSave(url, contentType) {
     } catch (_) { /* use defaults */ }
 
     // Determine file extension based on format setting
+    // Keep original extension for GIF/SVG (format conversion is skipped for these)
+    const skipConversion = contentType && (contentType.includes('gif') || contentType.includes('svg'));
     let ext = originalExt;
-    if (format === 'png') {
+    if (!skipConversion && format === 'png') {
       ext = '.png';
-    } else if (format === 'jpg') {
+    } else if (!skipConversion && format === 'jpg') {
       ext = '.jpg';
     } else if (!ext) {
       // Fallback: derive extension from content-type
@@ -1094,11 +1167,14 @@ async function tryAutoSave(url, contentType) {
       if (!ext) ext = '.png'; // ultimate fallback
     }
 
-    const downloadFilename = `${prefix}${baseName}${ext}`;
+    const subfolderPath = buildSubfolderPath(folderMode, rootFolder, pageUrl);
+    const downloadFilename = `${subfolderPath}/${prefix}${baseName}${ext}`;
 
     // Determine the download URL — for format conversion, use an offscreen-friendly data URL approach
+    // Skip conversion for GIF (would lose animation) and SVG (vector)
+    const isAnimatable = contentType && (contentType.includes('gif') || contentType.includes('svg'));
     let downloadUrl = url;
-    if (format !== 'original' && contentType && !contentType.includes(format === 'png' ? 'png' : 'jpeg')) {
+    if (format !== 'original' && !isAnimatable && contentType && !contentType.includes(format === 'png' ? 'png' : 'jpeg')) {
       // For format conversion, we re-fetch and convert via blob/createImageBitmap in the service worker
       try {
         const convertedUrl = await convertImageFormat(url, format);
@@ -1110,7 +1186,75 @@ async function tryAutoSave(url, contentType) {
       url: downloadUrl,
       filename: downloadFilename,
       saveAs: false,
+    }, (downloadId) => {
+      if (!chrome.runtime.lastError && downloadId) {
+        recordDownload({
+          downloadId,
+          sourceUrl: url,
+          pageUrl: pageUrl || '',
+          hostname: extractHostname(pageUrl || ''),
+          filename: downloadFilename,
+          contentType: contentType || '',
+          fileSize: 0,
+          timestamp: Date.now(),
+        });
+      }
     });
+  } catch (_) { /* auto-save failure should be silent */ }
+}
+
+async function tryAutoSaveVideo(videoData, pageUrl) {
+  try {
+    const result = await chrome.storage.local.get('devlensSettings');
+    const settings = result.devlensSettings;
+    if (!settings || !settings.autoSave) return;
+
+    const prefix = settings.filePrefix || 'devlens_';
+    const folderMode = settings.folderMode || 'none';
+    const rootFolder = settings.rootFolder || 'DevLens';
+    const subfolderPath = buildSubfolderPath(folderMode, rootFolder, pageUrl);
+
+    // Build filename
+    let baseName = extractVideoFilename(videoData);
+    if (!/\.(mp4|webm|mkv|mov|ts|m4v)$/i.test(baseName)) baseName += '.mp4';
+    const downloadFilename = `${subfolderPath}/${prefix}${baseName}`;
+
+    // 1) Instagram with shortcode → fetch API URL
+    if (videoData.igShortcode) {
+      try {
+        const videoUrl = await fetchIgVideoUrl(videoData.igShortcode);
+        chrome.downloads.download({ url: videoUrl, filename: downloadFilename, saveAs: false }, (downloadId) => {
+          if (!chrome.runtime.lastError && downloadId) {
+            recordDownload({
+              downloadId, sourceUrl: videoUrl, pageUrl: pageUrl || '',
+              hostname: extractHostname(pageUrl || ''), filename: downloadFilename,
+              contentType: 'video/mp4', fileSize: 0, timestamp: Date.now(),
+            });
+          }
+        });
+        sendToPanel({ action: 'videoProgress', stage: 'done', percent: 100, message: '자동 저장됨' });
+      } catch (_) { /* silent — IG API can fail */ }
+      return;
+    }
+
+    // 2) Direct (non-blob) video URL → simple download
+    if (!videoData.isBlob && videoData.src) {
+      chrome.downloads.download({ url: videoData.src, filename: downloadFilename, saveAs: false }, (downloadId) => {
+        if (!chrome.runtime.lastError && downloadId) {
+          recordDownload({
+            downloadId, sourceUrl: videoData.src, pageUrl: pageUrl || '',
+            hostname: extractHostname(pageUrl || ''), filename: downloadFilename,
+            contentType: 'video/mp4', fileSize: videoData.fileSize || 0, timestamp: Date.now(),
+          });
+          sendToPanel({ action: 'videoProgress', stage: 'done', percent: 100, message: '자동 저장됨' });
+        }
+      });
+      return;
+    }
+
+    // 3) HLS stream → delegate to offscreen (uses saveAs:true internally, skip auto for now)
+    // 4) Blob-only → can't auto-save without user interaction
+    // These cases are too complex for silent auto-save, skip silently
   } catch (_) { /* auto-save failure should be silent */ }
 }
 

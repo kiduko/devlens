@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS = {
   filePrefix: 'devlens_',
   saveFormat: 'original',
   enableHistory: false,
+  folderMode: 'none',
+  rootFolder: 'DevLens',
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -42,6 +44,9 @@ function applySettingsToUI() {
   $('#historyToggle').checked = settings.enableHistory;
   $('#filePrefix').value = settings.filePrefix;
   $('#saveFormat').value = settings.saveFormat;
+  $('#folderMode').value = settings.folderMode;
+  $('#rootFolder').value = settings.rootFolder;
+  updateFolderPreview();
   renderHistory();
 }
 
@@ -824,6 +829,42 @@ $('#saveFormat').addEventListener('change', (e) => {
   settings.saveFormat = e.target.value;
   saveSettings();
 });
+
+$('#folderMode').addEventListener('change', (e) => {
+  settings.folderMode = e.target.value;
+  saveSettings();
+  updateFolderPreview();
+});
+
+$('#rootFolder').addEventListener('input', (e) => {
+  settings.rootFolder = e.target.value;
+  saveSettings();
+  updateFolderPreview();
+});
+
+$('#btnGallery').addEventListener('click', () => {
+  chrome.tabs.create({ url: 'gallery.html' });
+});
+
+function updateFolderPreview() {
+  const el = $('#folderPreview');
+  if (!el) return;
+  const mode = settings.folderMode;
+  const root = settings.rootFolder || 'DevLens';
+  if (mode === 'none') {
+    el.textContent = `${root}/devlens_image.jpg`;
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const site = 'example.com';
+  const parts = [root];
+  if (mode === 'date') parts.push(today);
+  else if (mode === 'site') parts.push(site);
+  else if (mode === 'date-site') { parts.push(today); parts.push(site); }
+  else if (mode === 'site-date') { parts.push(site); parts.push(today); }
+  parts.push('devlens_image.jpg');
+  el.textContent = parts.join('/');
+}
 
 // ── cURL Generator ──
 
