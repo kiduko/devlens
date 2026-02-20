@@ -28,6 +28,9 @@ body {
 
 .hidden { display: none !important; }
 
+/* Popup window mode */
+.popup-mode { min-width: 360px; }
+
 kbd {
   background: rgba(255,255,255,0.1);
   padding: 1px 5px;
@@ -101,6 +104,29 @@ kbd {
 .empty-title { font-size: 14px; font-weight: 600; color: #ccc; margin-bottom: 8px; }
 .empty-desc { font-size: 12px; color: var(--text-dim); line-height: 1.7; }
 
+/* Features */
+.features {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feature-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.feature-row svg {
+  width: 14px;
+  height: 14px;
+  color: var(--purple);
+  flex-shrink: 0;
+}
+
 /* Loading */
 .loading-state {
   display: flex; flex-direction: column; align-items: center;
@@ -135,15 +161,15 @@ kbd {
 }
 
 /* Actions */
-.actions { display: flex; gap: 5px; padding: 8px 10px; }
+.actions { display: flex; gap: 4px; padding: 8px 10px; flex-wrap: wrap; }
 
 .action-btn {
   flex: 1;
   display: flex; align-items: center; justify-content: center; gap: 4px;
-  padding: 7px 4px;
+  padding: 7px 2px;
   background: var(--bg-card); color: #bbb;
   border: 1px solid var(--border); border-radius: 7px;
-  font-size: 11px; font-weight: 500;
+  font-size: 10px; font-weight: 500;
   cursor: pointer; transition: all 0.15s; font-family: inherit; white-space: nowrap;
 }
 
@@ -214,8 +240,27 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
+
+.url-copy-btn {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  margin-left: 4px;
+}
+
+.url-copy-btn svg { width: 12px; height: 12px; }
+.url-copy-btn:hover { color: #fff; background: rgba(255,255,255,0.08); border-color: var(--border); }
 
 .info-value a { color: #818CF8; text-decoration: none; }
 .info-value a:hover { text-decoration: underline; color: #A5B4FC; }
@@ -745,6 +790,7 @@ kbd {
 
 .settings-btn svg { width: 15px; height: 15px; }
 .settings-btn:hover { color: #fff; background: var(--bg-hover); border-color: rgba(255,255,255,0.1); }
+.settings-btn.pinned { color: var(--purple); border-color: var(--purple); background: rgba(124,58,237,0.15); }
 
 /* ── Settings Overlay ── */
 .settings-overlay {

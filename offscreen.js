@@ -9,7 +9,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     downloadHLS(msg.manifestUrl, msg.baseUrl, msg.filename);
   }
   if (msg.action === 'downloadDirect') {
-    downloadDirect(msg.url, msg.filename);
+    downloadDirect(msg.url, msg.filename, msg.expectedSize || 0);
   }
 });
 
@@ -179,19 +179,49 @@ async function downloadSegments(segments, filename) {
 
 // ── Direct Video Download (streams to OPFS) ──
 
-async function downloadDirect(url, filename) {
-  const tempName = '_devlens_temp_' + Date.now() + '.mp4';
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB per range request
+
+function fixVideoFilename(filename, contentType) {
+  let name = filename || 'video';
+  // If filename already has a video/audio extension, keep it
+  if (/\.(mp4|webm|mkv|avi|mov|ts|m4v|m4a|mp3|aac|ogg|flv)$/i.test(name)) return name;
+  // Determine extension from content-type
+  const extMap = {
+    'video/mp4': '.mp4', 'video/webm': '.webm', 'video/x-matroska': '.mkv',
+    'video/quicktime': '.mov', 'video/mp2t': '.ts', 'video/x-flv': '.flv',
+    'audio/mp4': '.m4a', 'audio/mpeg': '.mp3', 'audio/webm': '.webm',
+    'audio/aac': '.aac', 'audio/ogg': '.ogg',
+  };
+  if (contentType) {
+    const ct = contentType.split(';')[0].trim().toLowerCase();
+    if (extMap[ct]) return name + extMap[ct];
+  }
+  return name + '.mp4'; // fallback
+}
+
+async function downloadDirect(url, filename, expectedSize) {
+  const tempName = '_devlens_temp_' + Date.now();
+  const isYoutube = url.includes('googlevideo.com') || url.includes('videoplayback');
 
   try {
     sendProgress('downloading', 0, '다운로드 시작...');
 
+    // YouTube: use range-based chunked download
+    if (isYoutube && expectedSize > 0) {
+      const saveName = fixVideoFilename(filename, null);
+      await downloadRanged(url, saveName, expectedSize, tempName);
+      return;
+    }
+
+    // Everything else: simple streaming fetch
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-    const contentLength = parseInt(resp.headers.get('content-length') || '0');
-    const reader = resp.body.getReader();
+    const contentType = resp.headers.get('content-type') || '';
+    const saveName = fixVideoFilename(filename, contentType);
+    const totalSize = parseInt(resp.headers.get('content-length') || '0') || expectedSize || 0;
 
-    // Stream directly to OPFS — never hold entire file in memory
+    const reader = resp.body.getReader();
     const { handle, writable } = await getOPFSWritable(tempName);
     let received = 0;
 
@@ -203,17 +233,17 @@ async function downloadDirect(url, filename) {
         await writable.write(value);
         received += value.length;
 
-        const pct = contentLength > 0 ? Math.round((received / contentLength) * 100) : 0;
+        const pct = totalSize > 0 ? Math.round((received / totalSize) * 100) : 0;
         const sizeMB = (received / 1048576).toFixed(1);
         sendProgress('downloading', pct,
-          `${sizeMB} MB${contentLength > 0 ? ' / ' + (contentLength / 1048576).toFixed(1) + ' MB' : ''}`);
+          `${sizeMB} MB${totalSize > 0 ? ' / ' + (totalSize / 1048576).toFixed(1) + ' MB' : ''}`);
       }
 
       await writable.close();
 
       sendProgress('saving', 98, '저장 중...');
       const blob = await getOPFSBlob(handle);
-      await saveBlob(blob, filename || 'video.mp4');
+      await saveBlob(blob, saveName);
       sendProgress('done', 100, `완료 (${(received / 1048576).toFixed(1)} MB)`);
     } catch (err) {
       try { await writable.close(); } catch {}
@@ -226,16 +256,73 @@ async function downloadDirect(url, filename) {
   }
 }
 
+// ── Range-based Chunked Download ──
+
+async function downloadRanged(url, filename, totalSize, tempName) {
+  const { handle, writable } = await getOPFSWritable(tempName);
+  let received = 0;
+
+  try {
+    const totalMB = (totalSize / 1048576).toFixed(1);
+
+    while (received < totalSize) {
+      const end = Math.min(received + CHUNK_SIZE - 1, totalSize - 1);
+      const resp = await fetch(url, {
+        headers: { 'Range': `bytes=${received}-${end}` },
+      });
+
+      if (!resp.ok && resp.status !== 206) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+
+      const reader = resp.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writable.write(value);
+        received += value.length;
+
+        const pct = Math.round((received / totalSize) * 100);
+        const sizeMB = (received / 1048576).toFixed(1);
+        sendProgress('downloading', pct, `${sizeMB} / ${totalMB} MB`);
+      }
+    }
+
+    await writable.close();
+
+    sendProgress('saving', 98, '저장 중...');
+    const blob = await getOPFSBlob(handle);
+    await saveBlob(blob, fixVideoFilename(filename, null));
+    sendProgress('done', 100, `완료 (${(received / 1048576).toFixed(1)} MB)`);
+  } catch (err) {
+    try { await writable.close(); } catch {}
+    sendProgress('error', 0, err.message);
+    throw err;
+  } finally {
+    setTimeout(() => cleanupOPFS(tempName), 120000);
+  }
+}
+
 // ── Save ──
 
 async function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  chrome.runtime.sendMessage({
-    action: 'saveVideoBlob',
-    url,
-    filename,
-  });
-  // Revoke after download has time to start
+  // Re-wrap with correct MIME type
+  const ext = (filename.match(/\.(\w+)$/) || [])[1] || 'mp4';
+  const mimeMap = {
+    mp4: 'video/mp4', webm: 'video/webm', ts: 'video/mp2t',
+    mkv: 'video/x-matroska', mov: 'video/quicktime',
+    m4a: 'audio/mp4', mp3: 'audio/mpeg', aac: 'audio/aac',
+  };
+  const typed = new Blob([blob], { type: mimeMap[ext] || 'video/mp4' });
+  const url = URL.createObjectURL(typed);
+
+  // Use <a download> in offscreen DOM (chrome.downloads is unavailable here)
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 

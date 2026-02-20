@@ -367,6 +367,17 @@ function createSection(title, rows, collapsed) {
     }
     row.appendChild(labelSpan);
     row.appendChild(valueSpan);
+    if (isUrl && !isHtml) {
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'url-copy-btn';
+      copyBtn.title = 'URL 복사';
+      copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(value).then(() => toast('URL이 복사되었습니다'));
+      });
+      row.appendChild(copyBtn);
+    }
     body.appendChild(row);
   }
 
@@ -418,7 +429,7 @@ function renderVideoInfo(data) {
   if (fileSize) basicRows.push(['파일 크기', formatFileSize(fileSize)]);
   if (streamType) basicRows.push(['스트림 타입', streamType.toUpperCase()]);
   if (segmentCount) basicRows.push(['세그먼트 수', `${segmentCount}개`]);
-  basicRows.push(['소스', isBlob ? 'Blob (스트리밍)' : truncateUrl(src)]);
+  basicRows.push(['소스', isBlob ? (data.isMsBlob ? 'Blob (MediaSource)' : 'Blob (스트리밍)') : truncateUrl(src)]);
   if (streamUrl) basicRows.push(['스트림 URL', truncateUrl(streamUrl)]);
   container.appendChild(createSection('기본 정보', basicRows, false));
 
@@ -433,14 +444,74 @@ function renderVideoInfo(data) {
 
   // Download capability info
   const dlRows = [];
-  if (streamUrl) {
+  if (data.directMedia && data.directMedia.length > 0) {
+    dlRows.push(['다운로드 방식', '직접 미디어 URL']);
+    dlRows.push(['소스 수', `${data.directMedia.length}개`]);
+  } else if (streamUrl) {
     dlRows.push(['다운로드 방식', streamType === 'hls' ? 'HLS 세그먼트 병합' : 'DASH 세그먼트 병합']);
   } else if (!isBlob) {
     dlRows.push(['다운로드 방식', '직접 다운로드']);
+  } else if (data.captureInfo && data.captureInfo.totalSize > 0) {
+    dlRows.push(['다운로드 방식', 'MSE 버퍼 캡처']);
+    dlRows.push(['캡처 크기', formatFileSize(data.captureInfo.totalSize)]);
+    dlRows.push(['트랙', data.captureInfo.mimeTypes.join(', ')]);
   } else {
     dlRows.push(['다운로드 방식', '불가 (스트림 URL 미감지)']);
   }
-  container.appendChild(createSection('다운로드', dlRows, false));
+  const dlSection = createSection('다운로드', dlRows, false);
+  const dlBody = dlSection.querySelector('.info-section-body');
+
+  // Add direct media download buttons (YouTube videoplayback, etc.)
+  if (data.directMedia && data.directMedia.length > 0) {
+    const mediaWrap = document.createElement('div');
+    mediaWrap.style.cssText = 'padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 4px;';
+    for (const media of data.directMedia) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'action-btn';
+      const isVideo = media.mime && media.mime.startsWith('video');
+      const label = isVideo ? '영상' : '오디오';
+      const mimeShort = media.mime ? media.mime.split('/').pop().split(';')[0] : '?';
+      const sizeStr = media.size ? ` · ${formatFileSize(media.size)}` : '';
+      const itagStr = media.itag ? ` (itag ${media.itag})` : '';
+      btn.textContent = `${label}: ${mimeShort}${sizeStr}${itagStr}`;
+      btn.style.cssText = 'width: 100%; text-align: left; padding: 6px 8px; font-size: 11px;';
+      if (isVideo) btn.classList.add('primary');
+      btn.addEventListener('click', () => {
+        const ext = media.mime ? media.mime.split('/').pop().split(';')[0] : 'mp4';
+        chrome.runtime.sendMessage({
+          action: 'startVideoDownload',
+          videoData: { src: media.url, isBlob: false, expectedSize: media.size || 0 },
+        });
+        toast('다운로드 시작...');
+      });
+      mediaWrap.appendChild(btn);
+    }
+    dlBody.appendChild(mediaWrap);
+  }
+
+  // Add buffer download button for captured MSE data
+  if (isBlob && !streamUrl && data.captureInfo && data.captureInfo.totalSize > 0) {
+    const btnWrap = document.createElement('div');
+    btnWrap.style.cssText = 'padding: 4px 10px 8px;';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'action-btn primary';
+    btn.style.cssText = 'width: 100%;';
+    btn.textContent = `버퍼 다운로드 (${formatFileSize(data.captureInfo.totalSize)})`;
+    btn.addEventListener('click', () => {
+      let fname = 'video';
+      if (currentVideoData?.igUsername) {
+        fname = `${currentVideoData.igUsername}_${new Date().toISOString().slice(0, 10)}`;
+      }
+      chrome.runtime.sendMessage({ action: 'downloadCapture', filename: fname, blobUrl: currentVideoData?.src || '' });
+      toast('버퍼 다운로드 시작...');
+    });
+    btnWrap.appendChild(btn);
+    dlBody.appendChild(btnWrap);
+  }
+
+  container.appendChild(dlSection);
 
   // Reset progress
   $('#videoProgress').classList.add('hidden');
@@ -536,9 +607,14 @@ function renderHistory() {
 
 // ── Actions ──
 
+$('#btnSave').addEventListener('click', () => {
+  if (!currentSrc) return;
+  port.postMessage({ action: 'downloadImage', url: currentSrc, filename: extractFilename(currentSrc), saveAs: false });
+});
+
 $('#btnDownload').addEventListener('click', () => {
   if (!currentSrc) return;
-  port.postMessage({ action: 'downloadImage', url: currentSrc, filename: extractFilename(currentSrc) });
+  port.postMessage({ action: 'downloadImage', url: currentSrc, filename: extractFilename(currentSrc), saveAs: true });
 });
 
 $('#btnCopyUrl').addEventListener('click', async () => {
@@ -645,6 +721,50 @@ $('#infoSections').addEventListener('click', (e) => {
 
 $('#btnVideoDownload').addEventListener('click', () => {
   if (!currentVideoData) return;
+
+  // Instagram: use MSE buffer capture (Instagram serves DASH/fMP4 — direct URL download gets only init segment)
+  const isInstagram = currentVideoData.pageUrl && currentVideoData.pageUrl.includes('instagram.com');
+  if (isInstagram && currentVideoData.isBlob && currentVideoData.captureInfo && currentVideoData.captureInfo.totalSize > 0) {
+    const datePart = new Date().toISOString().slice(0, 10);
+    const filename = currentVideoData.igUsername
+      ? `${currentVideoData.igUsername}_${datePart}`
+      : `instagram_${datePart}`;
+    chrome.runtime.sendMessage({
+      action: 'downloadCapture',
+      filename,
+      blobUrl: currentVideoData.src,
+    });
+    toast('버퍼 다운로드 시작...');
+    return;
+  }
+
+  // Instagram fallback: API-based download
+  if (currentVideoData.igShortcode) {
+    chrome.runtime.sendMessage({
+      action: 'startVideoDownload',
+      videoData: currentVideoData,
+    });
+    toast('다운로드 시작...');
+    return;
+  }
+
+  // YouTube/other: if direct media URLs available, download the first video track
+  if (currentVideoData.directMedia && currentVideoData.directMedia.length > 0) {
+    const videoTrack = currentVideoData.directMedia.find(m => m.mime && m.mime.startsWith('video'));
+    const target = videoTrack || currentVideoData.directMedia[0];
+    chrome.runtime.sendMessage({
+      action: 'startVideoDownload',
+      videoData: { ...currentVideoData, src: target.url, isBlob: false, expectedSize: target.size || 0 },
+    });
+    toast('다운로드 시작...');
+    return;
+  }
+  // If blob with no stream URL but has captured buffer, use buffer download
+  if (currentVideoData.isBlob && !currentVideoData.streamUrl && currentVideoData.captureInfo?.totalSize > 0) {
+    chrome.runtime.sendMessage({ action: 'downloadCapture', filename: 'video', blobUrl: currentVideoData.src });
+    toast('버퍼 다운로드 시작...');
+    return;
+  }
   chrome.runtime.sendMessage({ action: 'startVideoDownload', videoData: currentVideoData });
 });
 
@@ -1498,6 +1618,70 @@ function toast(msg) {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1600);
 }
+
+// ── Pop-out / Dock-in ──
+
+const isPopup = new URLSearchParams(location.search).has('popup');
+
+if (isPopup) {
+  document.body.classList.add('popup-mode');
+  // Show dock-in icon
+  const btn = $('#btnPopout');
+  btn.title = '사이드 패널로 되돌리기';
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1"/><line x1="14" y1="12" x2="21" y2="12"/><polyline points="17 8 14 12 17 16"/></svg>';
+  // Show pin button
+  $('#btnPin').classList.remove('hidden');
+}
+
+let pinned = false;
+$('#btnPin').addEventListener('click', () => {
+  pinned = !pinned;
+  $('#btnPin').classList.toggle('pinned', pinned);
+  chrome.runtime.sendMessage({ action: 'setAlwaysOnTop', enabled: pinned });
+});
+
+$('#btnPopout').addEventListener('click', async () => {
+  if (isPopup) {
+    const params = new URLSearchParams(location.search);
+    const fromTab = Number(params.get('fromTab')) || 0;
+    const fromWindow = Number(params.get('fromWindow')) || 0;
+    try {
+      // Try original tab first
+      if (fromTab) {
+        const tab = await chrome.tabs.get(fromTab).catch(() => null);
+        if (tab) {
+          await chrome.windows.update(tab.windowId, { focused: true });
+          await chrome.sidePanel.open({ tabId: tab.id });
+          window.close();
+          return;
+        }
+      }
+      // Fallback: original window's active tab
+      if (fromWindow) {
+        try {
+          await chrome.windows.update(fromWindow, { focused: true });
+          const tabs = await chrome.tabs.query({ active: true, windowId: fromWindow });
+          if (tabs[0]) {
+            await chrome.sidePanel.open({ tabId: tabs[0].id });
+            window.close();
+            return;
+          }
+        } catch {}
+      }
+      // Last fallback: any normal window
+      const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+      if (windows[0]) {
+        await chrome.windows.update(windows[0].id, { focused: true });
+        const tabs = await chrome.tabs.query({ active: true, windowId: windows[0].id });
+        if (tabs[0]) await chrome.sidePanel.open({ tabId: tabs[0].id });
+      }
+    } catch {}
+    window.close();
+  } else {
+    chrome.runtime.sendMessage({ action: 'popOut' });
+    window.close();
+  }
+});
 
 // ── Init ──
 showState('empty');

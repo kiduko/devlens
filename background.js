@@ -418,11 +418,21 @@ const AIDetector = (() => {
 
 // ── State ──
 
-let panelPort = null;
+const panelPorts = new Set();
+let popupWindowId = null;
+let lastPanelState = null;
+let alwaysOnTop = false;
 
 function sendToPanel(msg) {
-  if (panelPort) {
-    try { panelPort.postMessage(msg); } catch(e) { /* panel closed */ }
+  if (msg.action === 'imageData' || msg.action === 'videoData' || msg.action === 'imageError') {
+    lastPanelState = msg;
+  }
+  for (const p of panelPorts) {
+    try { p.postMessage(msg); } catch { panelPorts.delete(p); }
+  }
+  // Pin mode: bring popup to front when new content arrives
+  if (alwaysOnTop && popupWindowId && (msg.action === 'imageData' || msg.action === 'videoData')) {
+    chrome.windows.update(popupWindowId, { focused: true }).catch(() => {});
   }
 }
 
@@ -432,12 +442,17 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidepanel') return;
-  panelPort = port;
+  panelPorts.add(port);
   activateAllTabs();
+
+  // Resend last state so pop-out/dock-in preserves content
+  if (lastPanelState) {
+    try { port.postMessage(lastPanelState); } catch {}
+  }
 
   port.onMessage.addListener((msg) => {
     if (msg.action === 'downloadImage') {
-      chrome.downloads.download({ url: msg.url, filename: msg.filename || undefined, saveAs: true });
+      downloadImage(msg.url, msg.filename, msg.saveAs !== false);
     }
     if (msg.action === 'refetchImage') {
       processImage(msg.src, null);
@@ -445,8 +460,8 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 
   port.onDisconnect.addListener(() => {
-    panelPort = null;
-    deactivateAllTabs();
+    panelPorts.delete(port);
+    if (panelPorts.size === 0) deactivateAllTabs();
   });
 });
 
@@ -467,7 +482,7 @@ function deactivateAllTabs() {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === 'complete' && panelPort) {
+  if (info.status === 'complete' && panelPorts.size > 0) {
     chrome.tabs.sendMessage(tabId, { action: 'activateInspector' }).catch(() => {});
   }
 });
@@ -492,13 +507,34 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // ── Content Script Messages ──
 
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === 'setAlwaysOnTop') {
+    alwaysOnTop = msg.enabled;
+    return;
+  }
+  if (msg.action === 'popOut') {
+    // Remember which tab we popped out from
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, ([tab]) => {
+      const tabId = tab ? tab.id : '';
+      const windowId = tab ? tab.windowId : '';
+      chrome.windows.create({
+        url: chrome.runtime.getURL(`sidepanel.html?popup=1&fromTab=${tabId}&fromWindow=${windowId}`),
+        type: 'popup',
+        width: 400,
+        height: 720,
+        focused: true,
+      }, (win) => {
+        if (win) popupWindowId = win.id;
+      });
+    });
+    return;
+  }
   if (msg.action === 'imageSelected') {
     processImage(msg.src, msg.pageInfo || null);
   }
   if (msg.action === 'videoSelected') {
     processVideo(msg.videoInfo);
   }
-  if (msg.action === 'contentReady' && panelPort) {
+  if (msg.action === 'contentReady' && panelPorts.size > 0) {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab) chrome.tabs.sendMessage(tab.id, { action: 'activateInspector' }).catch(() => {});
     });
@@ -517,7 +553,111 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === 'startVideoDownload') {
     startVideoDownload(msg.videoData);
   }
+  if (msg.action === 'downloadCapture') {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (tab) chrome.tabs.sendMessage(tab.id, { action: 'downloadCapture', filename: msg.filename, blobUrl: msg.blobUrl });
+    });
+  }
+  if (msg.action === 'captureDownloadDone') {
+    sendToPanel({ action: 'videoProgress', stage: 'done', percent: 100, message: '버퍼 다운로드 완료' });
+  }
+  if (msg.action === 'captureDownloadError') {
+    sendToPanel({ action: 'videoProgress', stage: 'error', percent: 0, message: msg.error });
+  }
 });
+
+// ── Instagram API ──
+
+async function fetchIgVideoUrl(shortcode) {
+  // Use Instagram's media info endpoint with the user's session cookies
+  const resp = await fetch(`https://www.instagram.com/p/${shortcode}/?__a=1&__d=dis`, {
+    credentials: 'include',
+    headers: {
+      'X-IG-App-ID': '936619743392459',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+  });
+  if (!resp.ok) throw new Error(`Instagram API HTTP ${resp.status}`);
+  const json = await resp.json();
+
+  const item = json.items?.[0];
+  if (!item) throw new Error('게시물을 찾을 수 없습니다');
+
+  // video_versions: array of {width, height, url}
+  if (item.video_versions && item.video_versions.length > 0) {
+    let best = item.video_versions[0];
+    for (const v of item.video_versions) {
+      if ((v.width || 0) > (best.width || 0)) best = v;
+    }
+    return best.url;
+  }
+
+  if (item.video_url) return item.video_url;
+
+  throw new Error('영상 URL을 찾을 수 없습니다');
+}
+
+// ── Download Video (direct URLs — YouTube, etc.) ──
+
+async function downloadVideo(srcUrl, filename) {
+  sendToPanel({ action: 'videoProgress', stage: 'downloading', percent: 0, message: '다운로드 중...' });
+  try {
+    let cleanName = filename || 'video';
+    if (!/\.(mp4|webm|mkv|mov|ts|m4v|m4a|mp3)$/i.test(cleanName)) {
+      cleanName += '.mp4';
+    }
+
+    // Use chrome.downloads directly — browser makes the request with proper
+    // cookies, Referer, and session context (unlike service worker fetch)
+    chrome.downloads.download({ url: srcUrl, filename: cleanName, saveAs: true }, (id) => {
+      if (chrome.runtime.lastError) {
+        sendToPanel({ action: 'videoProgress', stage: 'error', percent: 0, message: chrome.runtime.lastError.message });
+      } else {
+        sendToPanel({ action: 'videoProgress', stage: 'done', percent: 100, message: '다운로드 시작됨' });
+      }
+    });
+  } catch (err) {
+    sendToPanel({ action: 'videoProgress', stage: 'error', percent: 0, message: err.message });
+  }
+}
+
+// ── Download Image ──
+
+async function downloadImage(url, filename, saveAs = true) {
+  try {
+    // Fetch with credentials to handle auth-required images
+    const response = await fetch(url, { credentials: 'include' });
+    const blob = await response.blob();
+    const ct = blob.type || 'image/png';
+
+    // Convert to data URL for reliable download
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const dataUrl = `data:${ct};base64,${btoa(binary)}`;
+
+    // Sanitize filename
+    let cleanName = filename || 'image';
+    cleanName = cleanName.replace(/[<>:"/\\|?*]/g, '_');
+    if (!cleanName.includes('.')) {
+      const extMap = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'image/svg+xml': '.svg', 'image/avif': '.avif' };
+      cleanName += extMap[ct] || '.png';
+    }
+
+    chrome.downloads.download({ url: dataUrl, filename: cleanName, saveAs }, (id) => {
+      if (chrome.runtime.lastError) {
+        chrome.downloads.download({ url: dataUrl, saveAs });
+      }
+    });
+  } catch (err) {
+    chrome.downloads.download({ url, saveAs }, (id) => {
+      if (chrome.runtime.lastError) {
+        sendToPanel({ action: 'downloadComplete', path: '다운로드 실패: ' + (chrome.runtime.lastError.message || err.message) });
+      }
+    });
+  }
+}
 
 // ── Download Path Notification ──
 
@@ -706,17 +846,48 @@ async function processVideo(videoInfo) {
     durationFormatted: formatDuration(videoInfo.duration),
   };
 
+  if (videoInfo.igUsername) data.igUsername = videoInfo.igUsername;
+  if (videoInfo.igShortcode) data.igShortcode = videoInfo.igShortcode;
+
+  // If stream URL is a segment base (no manifest found), try common manifest names
+  if (videoInfo.streamUrl && videoInfo.streamType === 'hls_base') {
+    const base = videoInfo.streamUrl;
+    const candidates = ['index.m3u8', 'master.m3u8', 'playlist.m3u8', 'manifest.m3u8', 'stream.m3u8', 'chunklist.m3u8'];
+    for (const name of candidates) {
+      try {
+        const testUrl = base + name;
+        const resp = await fetch(testUrl);
+        if (resp.ok) {
+          const text = await resp.text();
+          if (text.includes('#EXTM3U')) {
+            data.streamUrl = testUrl;
+            data.streamType = 'hls';
+            data.manifestContent = text;
+            const headers = {};
+            resp.headers.forEach((v, k) => { headers[k] = v; });
+            data.headers = headers;
+            data.segmentCount = text.split('\n').filter(l => l.trim() && !l.startsWith('#')).length;
+            break;
+          }
+        }
+      } catch {}
+    }
+  }
+
   // If it's an HLS stream, try to fetch the manifest for info
-  if (videoInfo.streamUrl && videoInfo.streamType === 'hls') {
-    try {
-      const resp = await fetch(videoInfo.streamUrl);
-      const text = await resp.text();
-      const headers = {};
-      resp.headers.forEach((v, k) => { headers[k] = v; });
-      data.manifestContent = text;
-      data.headers = headers;
-      data.segmentCount = text.split('\n').filter(l => l.trim() && !l.startsWith('#')).length;
-    } catch {}
+  if (videoInfo.streamUrl && (videoInfo.streamType === 'hls' || data.streamType === 'hls')) {
+    const manifestUrl = data.streamUrl || videoInfo.streamUrl;
+    if (!data.manifestContent) {
+      try {
+        const resp = await fetch(manifestUrl);
+        const text = await resp.text();
+        const headers = {};
+        resp.headers.forEach((v, k) => { headers[k] = v; });
+        data.manifestContent = text;
+        data.headers = headers;
+        data.segmentCount = text.split('\n').filter(l => l.trim() && !l.startsWith('#')).length;
+      } catch {}
+    }
   }
 
   // If direct video URL, try HEAD to get size/headers
@@ -766,6 +937,21 @@ async function startVideoDownload(videoData) {
   sendToPanel({ action: 'videoProgress', stage: 'init', percent: 0, message: '다운로드 준비 중...' });
 
   try {
+    // Instagram: use API to get proper video URL
+    if (videoData.igShortcode) {
+      sendToPanel({ action: 'videoProgress', stage: 'downloading', percent: 0, message: 'Instagram API 요청 중...' });
+      const videoUrl = await fetchIgVideoUrl(videoData.igShortcode);
+      const filename = extractVideoFilename(videoData);
+      chrome.downloads.download({ url: videoUrl, filename, saveAs: true }, (id) => {
+        if (chrome.runtime.lastError) {
+          sendToPanel({ action: 'videoProgress', stage: 'error', percent: 0, message: chrome.runtime.lastError.message });
+        } else {
+          sendToPanel({ action: 'videoProgress', stage: 'done', percent: 100, message: '다운로드 시작됨' });
+        }
+      });
+      return;
+    }
+
     await ensureOffscreen();
 
     if (videoData.streamUrl && videoData.streamType === 'hls') {
@@ -777,11 +963,18 @@ async function startVideoDownload(videoData) {
         filename: extractVideoFilename(videoData),
       });
     } else if (!videoData.isBlob && videoData.src) {
-      chrome.runtime.sendMessage({
-        action: 'downloadDirect',
-        url: videoData.src,
-        filename: extractVideoFilename(videoData),
-      });
+      const isYoutube = videoData.src.includes('googlevideo.com') || videoData.src.includes('videoplayback');
+
+      if (!isYoutube) {
+        downloadVideo(videoData.src, extractVideoFilename(videoData));
+      } else {
+        chrome.runtime.sendMessage({
+          action: 'downloadDirect',
+          url: videoData.src,
+          filename: extractVideoFilename(videoData),
+          expectedSize: videoData.expectedSize || 0,
+        });
+      }
     } else {
       sendToPanel({ action: 'videoProgress', stage: 'error', percent: 0, message: '다운로드할 수 없는 소스입니다 (blob URL, 스트림 URL 미감지)' });
     }
@@ -791,6 +984,11 @@ async function startVideoDownload(videoData) {
 }
 
 function extractVideoFilename(data) {
+  // Instagram: use username in filename
+  if (data.igUsername) {
+    const ts = new Date().toISOString().slice(0, 10);
+    return `${data.igUsername}_${ts}.mp4`;
+  }
   if (data.streamUrl) {
     try {
       const name = new URL(data.streamUrl).pathname.split('/').pop();
@@ -799,7 +997,15 @@ function extractVideoFilename(data) {
   }
   if (data.src && !data.isBlob) {
     try {
-      const name = new URL(data.src).pathname.split('/').pop();
+      const u = new URL(data.src);
+      let name = u.pathname.split('/').pop();
+      // Skip unhelpful names like "videoplayback"
+      if (name === 'videoplayback' || name === 'player') {
+        const itag = u.searchParams.get('itag');
+        const mime = u.searchParams.get('mime') || '';
+        const ext = mime.includes('webm') ? 'webm' : 'mp4';
+        name = itag ? `video_itag${itag}.${ext}` : `video.${ext}`;
+      }
       if (name) return name;
     } catch {}
   }
@@ -833,6 +1039,15 @@ chrome.webRequest.onCompleted.addListener(
 chrome.tabs.onRemoved.addListener((tabId) => {
   detectedStreams.delete(tabId);
 });
+
+// Clean up popup window id
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === popupWindowId) {
+    popupWindowId = null;
+    alwaysOnTop = false;
+  }
+});
+
 
 // ── Auto-Save ──
 
