@@ -56,6 +56,16 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
           <div className="dl-setting-item">
             <div className="dl-setting-info">
+              <span className="dl-setting-label">이미지 오버레이</span>
+              <span className="dl-setting-desc">페이지 이미지 위에 인증 상태 및 정보 뱃지 표시</span>
+            </div>
+            <label className="dl-toggle">
+              <input type="checkbox" checked={settings.enableOverlay} onChange={(e) => setSettings({ enableOverlay: e.target.checked })} />
+              <span className="dl-toggle-slider" />
+            </label>
+          </div>
+          <div className="dl-setting-item">
+            <div className="dl-setting-info">
               <span className="dl-setting-label">파일명 접두사</span>
               <span className="dl-setting-desc">저장 파일명 앞에 붙는 텍스트</span>
             </div>

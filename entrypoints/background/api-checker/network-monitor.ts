@@ -4,6 +4,7 @@ import { DebuggerManager } from './debugger-manager';
 const MAX_RESPONSE_BODY_SIZE = 1024 * 1024; // 1MB
 const MAX_REQUESTS = 5000;
 const BATCH_INTERVAL = 100; // ms
+const BODY_TIMEOUT = 5000; // 5s
 
 interface CDPRequestWillBeSent {
   requestId: string;
@@ -60,6 +61,9 @@ export class NetworkMonitor {
         case 'Network.loadingFinished':
           this.handleLoadingFinished(params as unknown as CDPLoadingFinished);
           break;
+        case 'Network.loadingFailed':
+          this.handleLoadingFailed(params as unknown as { requestId: string });
+          break;
       }
     });
   }
@@ -74,6 +78,7 @@ export class NetworkMonitor {
 
   stopRecording() {
     this.recording = false;
+    this.pendingRequests.clear();
     this.flushBatch();
   }
 
@@ -109,7 +114,14 @@ export class NetworkMonitor {
     const pending = this.pendingRequests.get(requestId);
     if (!pending) return;
 
-    const url = new URL(response.url);
+    let path = '';
+    let queryString = '';
+    try {
+      const url = new URL(response.url);
+      path = url.pathname;
+      queryString = url.search;
+    } catch { /* invalid URL */ }
+
     const cookies = this.parseCookies(response.headers['set-cookie'] || '');
 
     const captured: CapturedRequest = {
@@ -117,8 +129,8 @@ export class NetworkMonitor {
       timestamp: pending.timestamp,
       method: pending.method,
       url: response.url,
-      path: url.pathname,
-      queryString: url.search,
+      path,
+      queryString,
       requestHeaders: pending.requestHeaders,
       responseHeaders: response.headers,
       requestBody: pending.requestBody,
@@ -132,14 +144,16 @@ export class NetworkMonitor {
       matchResult: null,
     };
 
-    // Store temporarily for body retrieval
-    (captured as CapturedRequest & { _pendingBody: boolean })._pendingBody = true;
     this.capturedRequests.push(captured);
 
     // Ring buffer
     if (this.capturedRequests.length > MAX_REQUESTS) {
       this.capturedRequests.shift();
     }
+
+    // Batch IMMEDIATELY so the request appears in the UI without waiting for body
+    this.batchBuffer.push(captured);
+    this.scheduleBatchFlush();
   }
 
   private async handleLoadingFinished(params: CDPLoadingFinished) {
@@ -147,15 +161,15 @@ export class NetworkMonitor {
     const pending = this.pendingRequests.get(requestId);
     if (!pending) return;
 
-    // Find the captured request
     const captured = this.capturedRequests.find(r => r.id === requestId);
     if (!captured) return;
 
-    // Get response body
+    // Get response body with timeout to prevent hanging
     try {
-      const result = await this.debuggerManager.sendCommand('Network.getResponseBody', {
-        requestId,
-      }) as { body: string; base64Encoded: boolean };
+      const result = await Promise.race([
+        this.debuggerManager.sendCommand('Network.getResponseBody', { requestId }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), BODY_TIMEOUT)),
+      ]) as { body: string; base64Encoded: boolean };
 
       if (result) {
         const body = result.base64Encoded
@@ -168,17 +182,20 @@ export class NetworkMonitor {
         } else {
           captured.responseBody = body;
         }
+
+        // Send update with body data
+        this.batchBuffer.push(captured);
+        this.scheduleBatchFlush();
       }
     } catch {
-      // Response body may not be available
+      // Response body may not be available or timed out — request is already visible in UI
     }
 
-    delete (captured as CapturedRequest & { _pendingBody?: boolean })._pendingBody;
     this.pendingRequests.delete(requestId);
+  }
 
-    // Add to batch
-    this.batchBuffer.push(captured);
-    this.scheduleBatchFlush();
+  private handleLoadingFailed(params: { requestId: string }) {
+    this.pendingRequests.delete(params.requestId);
   }
 
   private scheduleBatchFlush() {

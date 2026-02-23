@@ -2,12 +2,14 @@ import { processImage } from './image-processor';
 import { processVideo, fetchIgVideoUrl } from './video-processor';
 import { downloadImage, startVideoDownload, downloadVideo, initDownloadListener } from './download-manager';
 import { initStreamDetector } from './stream-detector';
+import { analyzeBatch } from './overlay-analyzer';
 
 const panelPorts = new Set<chrome.runtime.Port>();
 let popupWindowId: number | null = null;
 let lastPanelState: any = null;
 let alwaysOnTop = false;
 let autoSaveEnabled = false;
+let overlayEnabled = false;
 
 function sendToPanel(msg: any): void {
   if (msg.action === 'imageData' || msg.action === 'videoData' || msg.action === 'imageError') {
@@ -41,11 +43,22 @@ function deactivateAllTabs(): void {
   });
 }
 
+function broadcastOverlayState(enabled: boolean): void {
+  const action = enabled ? 'activateOverlay' : 'deactivateOverlay';
+  chrome.tabs.query({}, (tabs) => {
+    for (const t of tabs) {
+      if (t.id) chrome.tabs.sendMessage(t.id, { action }).catch(() => {});
+    }
+  });
+}
+
 export function initDevLensBackground(): void {
-  // Load autoSave state on startup
+  // Load autoSave and overlay state on startup
   chrome.storage.local.get('devlensSettings', (result) => {
     autoSaveEnabled = !!(result.devlensSettings && result.devlensSettings.autoSave);
+    overlayEnabled = !!(result.devlensSettings && result.devlensSettings.enableOverlay);
     if (autoSaveEnabled) activateAllTabs();
+    if (overlayEnabled) broadcastOverlayState(true);
   });
 
   // Listen for settings changes
@@ -60,12 +73,23 @@ export function initDevLensBackground(): void {
     } else if (!autoSaveEnabled && panelPorts.size === 0) {
       deactivateAllTabs();
     }
+
+    const wasOverlay = overlayEnabled;
+    overlayEnabled = !!(newSettings && newSettings.enableOverlay);
+    if (overlayEnabled !== wasOverlay) {
+      broadcastOverlayState(overlayEnabled);
+    }
   });
 
-  // Tab navigation → re-activate inspector
+  // Tab navigation → re-activate inspector and overlay
   chrome.tabs.onUpdated.addListener((tabId, info) => {
-    if (info.status === 'complete' && shouldInspectorBeActive()) {
-      chrome.tabs.sendMessage(tabId, { action: 'activateInspector' }).catch(() => {});
+    if (info.status === 'complete') {
+      if (shouldInspectorBeActive()) {
+        chrome.tabs.sendMessage(tabId, { action: 'activateInspector' }).catch(() => {});
+      }
+      if (overlayEnabled) {
+        chrome.tabs.sendMessage(tabId, { action: 'activateOverlay' }).catch(() => {});
+      }
     }
   });
 
@@ -123,7 +147,7 @@ export function handlePortConnect(port: chrome.runtime.Port): void {
   });
 }
 
-export function handleMessage(msg: any): void {
+export function handleMessage(msg: any, sender?: chrome.runtime.MessageSender): void {
   if (msg.action === 'setAlwaysOnTop') {
     alwaysOnTop = msg.enabled;
     return;
@@ -177,5 +201,11 @@ export function handleMessage(msg: any): void {
   }
   if (msg.action === 'captureDownloadError') {
     sendToPanel({ action: 'videoProgress', stage: 'error', percent: 0, message: msg.error });
+  }
+  if (msg.action === 'overlayAnalyzeBatch' && sender?.tab?.id) {
+    const tabId = sender.tab.id;
+    analyzeBatch(msg.items).then((results) => {
+      chrome.tabs.sendMessage(tabId, { action: 'overlayResultBatch', results }).catch(() => {});
+    });
   }
 }

@@ -1,3 +1,5 @@
+import { activateOverlay, deactivateOverlay, handleOverlayResultBatch } from './overlay';
+
 export default defineContentScript({
   matches: ['<all_urls>'],
   allFrames: true,
@@ -307,7 +309,7 @@ export default defineContentScript({
       if (!metaDown) return;
       if (!isContextValid()) { deactivate(); return; }
 
-      let videoTarget = e.target as Element;
+      // Phase 1: Check if click coordinates directly overlap a video element
       let foundVideo: HTMLVideoElement | null = null;
       const allVideos = document.querySelectorAll('video');
       for (const v of allVideos) {
@@ -320,9 +322,52 @@ export default defineContentScript({
           }
         }
       }
-      if (foundVideo) videoTarget = foundVideo;
 
-      const videoInfo = getVideoInfo(videoTarget);
+      // Phase 2: If click is directly on a video, handle as video
+      if (foundVideo) {
+        const videoInfo = getVideoInfo(foundVideo);
+        if (videoInfo) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (location.hostname.includes('instagram.com')) {
+            videoInfo.igUsername = findIgUsername(e.target as Element);
+            videoInfo.igShortcode = findIgShortcode(e.target as Element);
+          }
+
+          safeSendMessage({ action: 'videoSelected', videoInfo });
+          return;
+        }
+      }
+
+      // Phase 3: Try image detection (takes priority over parent-traversal video search)
+      const img = (e.target as Element).closest('img') as HTMLImageElement | null;
+      let src: string | null = null;
+      if (img && isLargeEnough(img)) {
+        src = img.src;
+      } else {
+        src = getImageSrc(e.target as Element);
+      }
+
+      if (src) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const imgEl = (e.target as Element).closest('img') || (e.target as Element).querySelector('img');
+        const pageInfo = {
+          renderWidth: (imgEl as HTMLImageElement)?.clientWidth || (e.target as HTMLElement).clientWidth,
+          renderHeight: (imgEl as HTMLImageElement)?.clientHeight || (e.target as HTMLElement).clientHeight,
+          naturalWidth: (imgEl as HTMLImageElement)?.naturalWidth || 0,
+          naturalHeight: (imgEl as HTMLImageElement)?.naturalHeight || 0,
+          alt: (imgEl as HTMLImageElement)?.alt || '',
+        };
+
+        safeSendMessage({ action: 'imageSelected', src, pageInfo });
+        return;
+      }
+
+      // Phase 4: Fallback — search parent elements for video (non-image, non-direct-video clicks)
+      const videoInfo = getVideoInfo(e.target as Element);
       if (videoInfo) {
         e.preventDefault();
         e.stopPropagation();
@@ -335,29 +380,6 @@ export default defineContentScript({
         safeSendMessage({ action: 'videoSelected', videoInfo });
         return;
       }
-
-      const img = (e.target as Element).closest('img') as HTMLImageElement | null;
-      let src: string | null = null;
-      if (img && isLargeEnough(img)) {
-        src = img.src;
-      } else {
-        src = getImageSrc(e.target as Element);
-      }
-      if (!src) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      const imgEl = (e.target as Element).closest('img') || (e.target as Element).querySelector('img');
-      const pageInfo = {
-        renderWidth: (imgEl as HTMLImageElement)?.clientWidth || (e.target as HTMLElement).clientWidth,
-        renderHeight: (imgEl as HTMLImageElement)?.clientHeight || (e.target as HTMLElement).clientHeight,
-        naturalWidth: (imgEl as HTMLImageElement)?.naturalWidth || 0,
-        naturalHeight: (imgEl as HTMLImageElement)?.naturalHeight || 0,
-        alt: (imgEl as HTMLImageElement)?.alt || '',
-      };
-
-      safeSendMessage({ action: 'imageSelected', src, pageInfo });
     }
 
     // Messages from background
@@ -366,6 +388,9 @@ export default defineContentScript({
         if (!isContextValid()) return;
         if (msg.action === 'activateInspector') activate();
         if (msg.action === 'deactivateInspector') deactivate();
+        if (msg.action === 'activateOverlay') activateOverlay();
+        if (msg.action === 'deactivateOverlay') deactivateOverlay();
+        if (msg.action === 'overlayResultBatch') handleOverlayResultBatch(msg.results);
         if (msg.action === 'downloadCapture') {
           window.postMessage({ __devlens_download_capture: true, filename: msg.filename || 'video', blobUrl: msg.blobUrl || '' }, '*');
         }

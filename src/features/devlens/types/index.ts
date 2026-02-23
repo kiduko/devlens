@@ -97,6 +97,16 @@ export interface DetectedUrlParam {
   origDim?: string;
 }
 
+// Overlay badge data
+export interface OverlayBadgeData {
+  src: string;
+  contentType: string;
+  fileSize: number;
+  credentialMode: 'none' | 'signed' | 'cookie' | 'signed+cookie';
+  status: number;
+  error?: string;
+}
+
 // Access analysis
 export interface AccessItem {
   icon: string;
@@ -111,6 +121,7 @@ export interface DevLensSettings {
   filePrefix: string;
   saveFormat: 'original' | 'png' | 'jpg';
   enableHistory: boolean;
+  enableOverlay: boolean;
   folderMode: 'none' | 'date' | 'site' | 'date-site' | 'site-date';
   rootFolder: string;
 }
@@ -148,7 +159,11 @@ export type DevLensRuntimeMessage =
   | { action: 'saveVideoBlob'; url: string; filename: string }
   | { action: 'heartbeat' }
   | { action: 'downloadHLS'; manifestUrl: string; baseUrl: string; filename: string }
-  | { action: 'downloadDirect'; url: string; filename: string; expectedSize: number };
+  | { action: 'downloadDirect'; url: string; filename: string; expectedSize: number }
+  | { action: 'overlayAnalyzeBatch'; items: { src: string; requestId: string }[] }
+  | { action: 'overlayResultBatch'; results: { requestId: string; result: OverlayBadgeData }[] }
+  | { action: 'activateOverlay' }
+  | { action: 'deactivateOverlay' };
 
 // Download record
 export interface DownloadRecord {

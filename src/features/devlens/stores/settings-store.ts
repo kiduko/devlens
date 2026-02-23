@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS: DevLensSettings = {
   filePrefix: 'devlens_',
   saveFormat: 'original',
   enableHistory: false,
+  enableOverlay: false,
   folderMode: 'none',
   rootFolder: 'DevLens',
 };

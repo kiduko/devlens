@@ -1,7 +1,7 @@
 import { parseExif } from '../../../src/features/devlens/services/exif-parser';
 import { tryAutoSave } from '../../../src/features/devlens/services/auto-save';
 
-const URL_AUTH_PARAM_NAMES = [
+export const URL_AUTH_PARAM_NAMES = [
   'sig', 'signature', 'token', 'auth', 'hmac',
   'access_token', 'api_key', 'apikey', 'key',
   'X-Amz-Signature', 'X-Amz-Credential', 'X-Amz-Date', 'X-Amz-Expires',

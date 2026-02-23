@@ -14,7 +14,7 @@ export default defineBackground(() => {
   // Message router: DevLens uses { action }, API Checker uses { type }
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if ('action' in msg) {
-      devlensHandleMessage(msg);
+      devlensHandleMessage(msg, sender);
       return false;
     }
     if ('type' in msg) {

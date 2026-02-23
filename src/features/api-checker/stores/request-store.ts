@@ -16,8 +16,12 @@ export const useRequestStore = create<RequestState>((set) => ({
 
   addRequests: (newRequests) =>
     set((state) => {
-      const updated = [...state.requests, ...newRequests];
-      // Ring buffer: keep max 5000
+      // Upsert: update existing requests by id (for body updates), append new ones
+      const requestMap = new Map(state.requests.map(r => [r.id, r]));
+      for (const req of newRequests) {
+        requestMap.set(req.id, req);
+      }
+      const updated = Array.from(requestMap.values());
       const trimmed = updated.length > 5000 ? updated.slice(-5000) : updated;
       return { requests: trimmed };
     }),
