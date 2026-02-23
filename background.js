@@ -440,6 +440,40 @@ function sendToPanel(msg) {
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
+// Track whether autoSave is on (kept in sync via storage listener)
+let autoSaveEnabled = false;
+
+// Check if inspector should be active (panel open OR autoSave on)
+function shouldInspectorBeActive() {
+  return panelPorts.size > 0 || autoSaveEnabled;
+}
+
+// Load autoSave state on service worker startup
+chrome.storage.local.get('devlensSettings', (result) => {
+  autoSaveEnabled = !!(result.devlensSettings && result.devlensSettings.autoSave);
+  if (autoSaveEnabled) activateAllTabs();
+});
+
+// Listen for settings changes (from sidepanel or any context)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.devlensSettings) return;
+  const newSettings = changes.devlensSettings.newValue;
+  const wasEnabled = autoSaveEnabled;
+  autoSaveEnabled = !!(newSettings && newSettings.autoSave);
+
+  if (autoSaveEnabled && !wasEnabled) {
+    // autoSave turned ON → activate inspector even without panel
+    activateAllTabs();
+  } else if (!autoSaveEnabled && !wasEnabled && panelPorts.size === 0) {
+    // autoSave was off and still off, no panel → ensure deactivated
+    deactivateAllTabs();
+  }
+  // If autoSave turned OFF but panel is open, keep active (panel handles it)
+  if (!autoSaveEnabled && panelPorts.size === 0) {
+    deactivateAllTabs();
+  }
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidepanel') return;
   panelPorts.add(port);
@@ -461,7 +495,10 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     panelPorts.delete(port);
-    if (panelPorts.size === 0) deactivateAllTabs();
+    // Only deactivate if autoSave is also off
+    if (panelPorts.size === 0 && !autoSaveEnabled) {
+      deactivateAllTabs();
+    }
   });
 });
 
@@ -482,7 +519,7 @@ function deactivateAllTabs() {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === 'complete' && panelPorts.size > 0) {
+  if (info.status === 'complete' && shouldInspectorBeActive()) {
     chrome.tabs.sendMessage(tabId, { action: 'activateInspector' }).catch(() => {});
   }
 });
@@ -534,7 +571,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === 'videoSelected') {
     processVideo(msg.videoInfo);
   }
-  if (msg.action === 'contentReady' && panelPorts.size > 0) {
+  if (msg.action === 'contentReady' && shouldInspectorBeActive()) {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab) chrome.tabs.sendMessage(tab.id, { action: 'activateInspector' }).catch(() => {});
     });
