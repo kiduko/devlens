@@ -543,47 +543,6 @@ kbd {
   }
 }
 
-/* ── AI Detection ── */
-.ai-verdict {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 5px;
-  margin-bottom: 4px;
-}
-.ai-verdict.ai-detected {
-  background: rgba(220, 38, 38, 0.05);
-  border: 1px solid rgba(220, 38, 38, 0.12);
-}
-.ai-verdict.ai-none {
-  background: rgba(22, 163, 74, 0.05);
-  border: 1px solid rgba(22, 163, 74, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-  .ai-verdict.ai-detected {
-    background: rgba(251, 146, 60, 0.08);
-    border-color: rgba(251, 146, 60, 0.2);
-  }
-  .ai-verdict.ai-none {
-    background: rgba(52, 211, 153, 0.06);
-    border-color: rgba(52, 211, 153, 0.12);
-  }
-}
-
-.ai-verdict-icon { font-size: 18px; flex-shrink: 0; }
-.ai-verdict-text { display: flex; flex-direction: column; gap: 1px; }
-.ai-verdict-label { font-size: 11px; font-weight: 600; color: var(--text); }
-.ai-detected .ai-verdict-label { color: var(--red); }
-.ai-none .ai-verdict-label { color: var(--green); }
-
-@media (prefers-color-scheme: dark) {
-  .ai-detected .ai-verdict-label { color: #fb923c; }
-}
-
-.ai-verdict-conf { font-size: 9px; color: var(--text-dim); }
-
 /* ── Access & Auth ── */
 .access-body {
   display: flex;
