@@ -1,0 +1,40 @@
+{
+  "name": "devlens",
+  "description": "Image/Video analysis & API monitoring Chrome Extension",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-window": "^1.8.11",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/js-yaml": "^4.0.9",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-window": "^1.8.8",
+    "@wxt-dev/module-react": "^1.1.5",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.5",
+    "wxt": "^0.20.17"
+  }
+}
