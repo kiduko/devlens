@@ -1,5 +1,5 @@
-import { useCallback, useRef, useEffect } from 'react';
-import { VariableSizeList as List } from 'react-window';
+import { useCallback, useEffect } from 'react';
+import { List, useListRef, type RowComponentProps } from 'react-window';
 import { useTimelineItems, type TimelineItem } from '../../hooks/useTimelineItems';
 import { useRequestStore } from '../../stores/request-store';
 import { TimelineRow } from './TimelineRow';
@@ -9,25 +9,26 @@ import { EmptyState } from '../common/EmptyState';
 const REQUEST_HEIGHT = 48;
 const GAP_HEIGHT = 28;
 
+type RowData = {
+  items: TimelineItem[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  firstRequestIdx: number;
+  lastRequestIdx: number;
+};
+
 export function TimelineView() {
   const items = useTimelineItems();
   const selectedId = useRequestStore((s) => s.selectedRequestId);
   const setSelectedRequest = useRequestStore((s) => s.setSelectedRequest);
-  const listRef = useRef<List>(null);
+  const listRef = useListRef();
 
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     if (listRef.current && items.length > 0) {
-      listRef.current.scrollToItem(items.length - 1);
+      listRef.current.scrollToRow({ index: items.length - 1 });
     }
   }, [items.length]);
-
-  // Reset cached sizes when items change
-  useEffect(() => {
-    if (listRef.current) {
-      listRef.current.resetAfterIndex(0);
-    }
-  }, [items]);
 
   const handleSelect = useCallback((id: string) => {
     setSelectedRequest(selectedId === id ? null : id);
@@ -48,16 +49,13 @@ export function TimelineView() {
   return (
     <div className="flex-1 overflow-hidden">
       <List
-        ref={listRef}
-        height={400}
-        width="100%"
-        itemCount={items.length}
-        itemSize={getItemSize}
+        listRef={listRef}
+        rowCount={items.length}
+        rowHeight={getItemSize}
         overscanCount={20}
-        itemData={{ items, selectedId, onSelect: handleSelect, firstRequestIdx, lastRequestIdx }}
-      >
-        {TimelineItemRenderer}
-      </List>
+        rowComponent={TimelineItemRenderer}
+        rowProps={{ items, selectedId, onSelect: handleSelect, firstRequestIdx, lastRequestIdx }}
+      />
     </div>
   );
 }
@@ -69,20 +67,8 @@ function findLastIndex<T>(arr: T[], pred: (item: T) => boolean): number {
   return -1;
 }
 
-interface RendererData {
-  items: TimelineItem[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  firstRequestIdx: number;
-  lastRequestIdx: number;
-}
-
-function TimelineItemRenderer({ index, style, data }: {
-  index: number;
-  style: React.CSSProperties;
-  data: RendererData;
-}) {
-  const item = data.items[index];
+function TimelineItemRenderer({ index, style, items, selectedId, onSelect, firstRequestIdx, lastRequestIdx }: RowComponentProps<RowData>) {
+  const item = items[index];
 
   if (item.type === 'gap') {
     return (
@@ -96,10 +82,10 @@ function TimelineItemRenderer({ index, style, data }: {
     <div style={style}>
       <TimelineRow
         request={item.request}
-        selected={item.request.id === data.selectedId}
-        isFirst={index === data.firstRequestIdx}
-        isLast={index === data.lastRequestIdx}
-        onClick={() => data.onSelect(item.request.id)}
+        selected={item.request.id === selectedId}
+        isFirst={index === firstRequestIdx}
+        isLast={index === lastRequestIdx}
+        onClick={() => onSelect(item.request.id)}
       />
     </div>
   );

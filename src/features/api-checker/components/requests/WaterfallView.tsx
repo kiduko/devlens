@@ -1,5 +1,5 @@
-import { useCallback, useRef, useEffect, useState } from 'react';
-import { FixedSizeList as List } from 'react-window';
+import { useCallback, useEffect, useState } from 'react';
+import { List, useListRef, type RowComponentProps } from 'react-window';
 import { useWaterfallData, computeTicks } from '../../hooks/useWaterfallData';
 import { useRequestStore } from '../../stores/request-store';
 import { WaterfallRow } from './WaterfallRow';
@@ -7,17 +7,25 @@ import { EmptyState } from '../common/EmptyState';
 
 const ROW_HEIGHT = 24;
 
+type RowData = {
+  requests: ReturnType<typeof useWaterfallData>['requests'];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  startTime: number;
+  totalSpan: number;
+};
+
 export function WaterfallView() {
   const { requests, startTime, totalSpan } = useWaterfallData();
   const selectedId = useRequestStore((s) => s.selectedRequestId);
   const setSelectedRequest = useRequestStore((s) => s.setSelectedRequest);
-  const listRef = useRef<List>(null);
-  const waterfallRef = useRef<HTMLDivElement>(null);
+  const listRef = useListRef();
+  const waterfallRef = useState<HTMLDivElement | null>(null);
   const [barWidth, setBarWidth] = useState(300);
 
   // Measure waterfall area width for tick computation
   useEffect(() => {
-    const el = waterfallRef.current;
+    const el = waterfallRef[0];
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -26,12 +34,12 @@ export function WaterfallView() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [waterfallRef[0]]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     if (listRef.current && requests.length > 0) {
-      listRef.current.scrollToItem(requests.length - 1);
+      listRef.current.scrollToRow({ index: requests.length - 1 });
     }
   }, [requests.length]);
 
@@ -54,7 +62,7 @@ export function WaterfallView() {
         {/* Status column header */}
         <div className="w-9 shrink-0" />
         {/* Time scale */}
-        <div ref={waterfallRef} className="flex-1 relative px-1">
+        <div ref={(el) => { if (el !== waterfallRef[0]) waterfallRef[1](el); }} className="flex-1 relative px-1">
           {ticks.map((tick, i) => (
             <div
               key={i}
@@ -88,43 +96,28 @@ export function WaterfallView() {
         </div>
 
         <List
-          ref={listRef}
-          height={400}
-          width="100%"
-          itemCount={requests.length}
-          itemSize={ROW_HEIGHT}
+          listRef={listRef}
+          rowCount={requests.length}
+          rowHeight={ROW_HEIGHT}
           overscanCount={30}
-          itemData={{ requests, selectedId, onSelect: handleSelect, startTime, totalSpan }}
-        >
-          {WaterfallRowRenderer}
-        </List>
+          rowComponent={WaterfallRowRenderer}
+          rowProps={{ requests, selectedId, onSelect: handleSelect, startTime, totalSpan }}
+        />
       </div>
     </div>
   );
 }
 
-interface RendererData {
-  requests: ReturnType<typeof useWaterfallData>['requests'];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  startTime: number;
-  totalSpan: number;
-}
-
-function WaterfallRowRenderer({ index, style, data }: {
-  index: number;
-  style: React.CSSProperties;
-  data: RendererData;
-}) {
-  const request = data.requests[index];
+function WaterfallRowRenderer({ index, style, requests, selectedId, onSelect, startTime, totalSpan }: RowComponentProps<RowData>) {
+  const request = requests[index];
   return (
     <div style={style}>
       <WaterfallRow
         request={request}
-        selected={request.id === data.selectedId}
-        startTime={data.startTime}
-        totalSpan={data.totalSpan}
-        onClick={() => data.onSelect(request.id)}
+        selected={request.id === selectedId}
+        startTime={startTime}
+        totalSpan={totalSpan}
+        onClick={() => onSelect(request.id)}
       />
     </div>
   );
