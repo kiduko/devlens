@@ -21,8 +21,18 @@ export default defineConfig({
     side_panel: {
       default_path: 'sidepanel.html',
     },
+    icons: {
+      16: 'icons/icon16.png',
+      48: 'icons/icon48.png',
+      128: 'icons/icon128.png',
+    },
     action: {
       default_title: 'DevLens 열기',
+      default_icon: {
+        16: 'icons/icon16.png',
+        48: 'icons/icon48.png',
+        128: 'icons/icon128.png',
+      },
     },
   },
 });
