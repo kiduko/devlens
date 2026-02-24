@@ -102,6 +102,18 @@ Chrome Debugger Protocol(CDP)을 사용하여 XHR/Fetch 요청을 실시간으�
 
 ## 설치
 
+### 릴리즈 설치 (권장)
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/kiduko/devlens/main/install.sh)
+```
+
+`~/devlens`에 설치됩니다. 업데이트도 같은 명령어로 실행하면 됩니다.
+
+설치 후 `chrome://extensions` → 개발자 모드 → `~/devlens` 폴더 로드
+
+### 소스 빌드
+
 ```bash
 pnpm install
 pnpm dev          # 개발 모드 (HMR)
