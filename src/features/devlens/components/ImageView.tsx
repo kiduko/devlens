@@ -22,12 +22,12 @@ export function ImageView({ sendMessage }: ImageViewProps) {
   const isBase64 = currentSrc.startsWith('data:');
 
   // Basic info rows
-  const basicRows: Array<{ label: string; value: string; isHtml?: boolean }> = [];
+  const basicRows: Array<{ label: string; value: string; renderValue?: React.ReactNode }> = [];
 
   if (isBase64) {
     const mimeMatch = currentSrc.match(/^data:([^;,]+)/);
     const mime = mimeMatch ? mimeMatch[1] : 'unknown';
-    basicRows.push({ label: '소스', value: '<span class="dl-badge dl-base64">Base64</span>', isHtml: true });
+    basicRows.push({ label: '소스', value: 'Base64', renderValue: <span className="dl-badge dl-base64">Base64</span> });
     basicRows.push({ label: '포맷', value: formatContentType(mime) });
     basicRows.push({ label: '데이터 크기', value: formatFileSize(data.fileSize) });
   } else {
@@ -97,14 +97,23 @@ export function ImageView({ sendMessage }: ImageViewProps) {
 
           {exifGroups ? (
             exifGroups.map((group) => {
-              const rows: Array<{ label: string; value: string; isHtml?: boolean }> = [];
+              const rows: Array<{ label: string; value: string; renderValue?: React.ReactNode }> = [];
               for (const key of group.keys) {
                 if (data.exif!.formatted[key] == null) continue;
                 if (key === 'GPS 위치' && data.exif!.gps) {
+                  const gpsText = String(data.exif!.formatted[key]);
                   rows.push({
                     label: key,
-                    value: `<a href="https://www.google.com/maps?q=${data.exif!.gps.lat},${data.exif!.gps.lng}" target="_blank">${data.exif!.formatted[key]}</a>`,
-                    isHtml: true,
+                    value: gpsText,
+                    renderValue: (
+                      <a
+                        href={`https://www.google.com/maps?q=${data.exif!.gps.lat},${data.exif!.gps.lng}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {gpsText}
+                      </a>
+                    ),
                   });
                 } else {
                   rows.push({ label: key, value: String(data.exif!.formatted[key]) });

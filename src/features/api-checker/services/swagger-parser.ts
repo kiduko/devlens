@@ -7,7 +7,6 @@ export async function parseSwaggerFromUrl(url: string): Promise<ParsedSpec> {
     throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
   }
   const text = await response.text();
-  console.log(`[API Checker] Fetched spec from ${url}, size: ${text.length} bytes`);
   return parseSwaggerFromText(text, url);
 }
 
@@ -71,8 +70,6 @@ export async function parseSwaggerFromObject(raw: unknown, sourceUrl?: string): 
   const id = typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `spec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-  console.log(`[API Checker] Parsed spec: "${title}" v${version}, basePath="${basePath}", ${endpoints.length} endpoints`);
 
   return { id, title, version, basePath, sourceUrl, endpoints, raw: doc };
 }

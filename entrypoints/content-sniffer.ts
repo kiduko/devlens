@@ -1,5 +1,5 @@
 // Runs in MAIN world to intercept fetch/XHR/MediaSource for stream URL capture.
-// Communicates with content.js via window.postMessage.
+// Communicates with content script via window.postMessage.
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -275,7 +275,7 @@ export default defineContentScript({
       } catch { return null; }
     }
 
-    // Handle download request from content.js
+    // Handle download request from content script
     window.addEventListener('message', (e) => {
       if (!e.data || !e.data.__devlens_download_capture) return;
 

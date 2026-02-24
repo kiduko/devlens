@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { InfoRow } from './InfoRow';
 
 interface InfoSectionProps {
   title: string;
-  rows: Array<{ label: string; value: string; isHtml?: boolean }>;
+  rows: Array<{ label: string; value: string; renderValue?: ReactNode }>;
   defaultCollapsed?: boolean;
   className?: string;
   headerClassName?: string;
@@ -30,7 +31,7 @@ export function InfoSection({ title, rows, defaultCollapsed = false, className, 
               key={i}
               label={row.label}
               value={row.value}
-              isHtml={row.isHtml}
+              renderValue={row.renderValue}
               isUrl={isUrlLabel(row.label)}
             />
           ))}

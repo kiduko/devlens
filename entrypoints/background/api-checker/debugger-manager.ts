@@ -5,8 +5,7 @@ export class DebuggerManager {
   private onDetachCallback: (() => void) | null = null;
 
   constructor() {
-    chrome.debugger.onDetach.addListener((_source, reason) => {
-      console.log('Debugger detached:', reason);
+    chrome.debugger.onDetach.addListener((_source, _reason) => {
       this.attachedTabId = null;
       this.onDetachCallback?.();
     });

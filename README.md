@@ -12,12 +12,9 @@ Chrome 확장 프로그램 — 웹 이미지/동영상 분석 및 다운로드 �
 - HTTP 응답 헤더 전체 표시
 - Base64 이미지 지원 (소스 타입 표시)
 
-### AI 생성 이미지 감지
-- EXIF Software 필드에서 AI 도구 패턴 매칭 (Midjourney, DALL-E, Stable Diffusion, Firefly, FLUX 등 20종)
-- XMP CreatorTool / SoftwareAgent 분석
-- IPTC DigitalSourceType (`trainedAlgorithmicMedia`) 감지
-- PNG tEXt 청크 분석 (Stable Diffusion parameters, prompt 등)
-- C2PA Content Credentials (JUMBF/caBX) 감지 및 claim_generator 추출
+### 이미지 오버레이
+- 페이지 내 이미지에 파일 크기/상태 뱃지 오버레이 표시
+- 로딩 상태, 에러 여부 시각적 확인
 
 ### 접근 권한 분석
 - **Signed URL 감지** — AWS S3, GCP, Azure SAS, 일반 서명 파라미터 자동 분류
@@ -40,7 +37,7 @@ Chrome 확장 프로그램 — 웹 이미지/동영상 분석 및 다운로드 �
 
 ### 다운로드
 - 이미지 다운로드 (원본 포맷 유지 또는 변환)
-- 자동 저장 옵션
+- 자동 저장 옵션 (하위폴더 지정, GIF/동영상 자동 다운로드)
 - 저장 경로 toast 표시
 - cURL 명령어 생성 및 복사
 - 이미지 클립보드 복사 (PNG 변환)
@@ -52,12 +49,34 @@ Chrome 확장 프로그램 — 웹 이미지/동영상 분석 및 다운로드 �
 - 프레임 캡처 미리보기 (blob URL) / 플레이어 미리보기 (직접 URL)
 - 동영상 cURL 생성
 
+### API Checker
+- Swagger / OpenAPI 스펙 URL 등록
+- 네트워크 요청 실시간 캡처 (Chrome Debugger Protocol)
+- 요청을 등록된 API 스펙 엔드포인트에 자동 매칭
+- 매칭 결과 타임라인 뷰 (시간순 요청 흐름 시각화)
+- 매칭/미매칭 필터링 및 상세 정보 표시
+
+### 갤러리
+- 다운로드 이력 조회 페이지
+- 저장된 이미지/동영상 목록 확인
+
 ## 설치
 
-1. `chrome://extensions` 열기
-2. **개발자 모드** 활성화
-3. **압축해제된 확장 프로그램을 로드합니다** 클릭
-4. 이 폴더 선택
+### 개발 환경
+
+```bash
+pnpm install
+pnpm dev        # 개발 모드 (HMR)
+pnpm build      # 프로덕션 빌드
+```
+
+### Chrome에 로드
+
+1. `pnpm build` 실행
+2. `chrome://extensions` 열기
+3. **개발자 모드** 활성화
+4. **압축해제된 확장 프로그램을 로드합니다** 클릭
+5. `.output/chrome-mv3` 폴더 선택
 
 ## 사용법
 
@@ -68,25 +87,31 @@ Chrome 확장 프로그램 — 웹 이미지/동영상 분석 및 다운로드 �
 ## 파일 구조
 
 ```
-├── manifest.json      # 확장 설정 (MV3)
-├── background.js      # 서비스 워커 (이미지 fetch, EXIF/AI 분석)
-├── content.js         # 콘텐츠 스크립트 (이미지/비디오 선택)
-├── content.css        # 호버 하이라이트 스타일
-├── sniffer.js         # MAIN world 스크립트 (HLS/DASH URL 캡처)
-├── sidepanel.html     # 사이드패널 UI
-├── sidepanel.js       # 사이드패널 로직
-├── sidepanel.css      # 사이드패널 스타일
-├── offscreen.html     # 오프스크린 문서 (영상 다운로드)
-├── offscreen.js       # OPFS 기반 영상 다운로드 로직
-└── icons/             # 확장 아이콘
+├── entrypoints/
+│   ├── background/          # 서비스 워커 (메시지 라우팅, API Checker)
+│   ├── content/             # 콘텐츠 스크립트 (이미지/비디오 선택, 오버레이)
+│   ├── content-sniffer.ts   # MAIN world 스크립트 (HLS/DASH URL 캡처)
+│   ├── sidepanel/           # 사이드패널 React UI
+│   ├── gallery/             # 갤러리 페이지
+│   └── offscreen/           # 오프스크린 문서 (영상 다운로드)
+├── src/
+│   ├── features/
+│   │   ├── api-checker/     # API Checker 기능 (스펙 파싱, 매칭, UI)
+│   │   └── devlens/         # DevLens 핵심 기능 (분석, 다운로드)
+│   └── shared/              # 공용 유틸리티, 타입
+├── wxt.config.ts            # WXT 빌드 설정
+├── tailwind.config.js       # Tailwind CSS 설정
+└── package.json
 ```
 
 ## 기술 스택
 
+- **WXT** — 크로스 브라우저 확장 프레임워크
+- **React 19** + **TypeScript** — UI 및 타입 안전성
+- **Tailwind CSS** — 스타일링
+- **Zustand** — 상태 관리
+- **Vitest** — 테스트
 - Chrome Extension Manifest V3
-- Side Panel API
-- OPFS (Origin Private File System)
+- Side Panel API, OPFS (Origin Private File System)
 - Content Scripts (ISOLATED + MAIN world)
-- `chrome.cookies`, `chrome.downloads`, `chrome.webRequest`
-- C2PA JUMBF 바이너리 파싱
-- XMP/IPTC 메타데이터 추출
+- `chrome.cookies`, `chrome.downloads`, `chrome.debugger`

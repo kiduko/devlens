@@ -33,5 +33,4 @@ export default defineBackground(() => {
     }
   });
 
-  console.log('DevLens background initialized');
 });

@@ -6,7 +6,6 @@ export function matchRequest(
   specs: ParsedSpec[],
 ): MatchResult {
   if (specs.length === 0) {
-    console.log(`[Match] No specs loaded`);
     return { matched: false, endpoint: null, pathParams: {}, confidence: 'none' };
   }
 
@@ -17,7 +16,6 @@ export function matchRequest(
     }
   }
 
-  console.log(`[Match] MISS ${request.method} ${request.path} — no match in ${specs.length} spec(s)`);
   return { matched: false, endpoint: null, pathParams: {}, confidence: 'none' };
 }
 
@@ -41,7 +39,6 @@ function matchRequestAgainstSpec(
   for (const endpoint of methodEndpoints) {
     const endpointPath = normalizePath(endpoint.path);
     if (relativePath === endpointPath) {
-      console.log(`[Match] EXACT ${requestMethod} ${requestPath} → ${spec.title}: ${endpoint.path}`);
       return {
         matched: true,
         endpoint: toMatchedEndpoint(endpoint, spec),
@@ -57,7 +54,6 @@ function matchRequestAgainstSpec(
     const result = matchPath(relativePath, endpointPath);
 
     if (result.matched) {
-      console.log(`[Match] PATTERN ${requestMethod} ${requestPath} → ${spec.title}: ${endpoint.path}`, result.params);
       return {
         matched: true,
         endpoint: toMatchedEndpoint(endpoint, spec),
@@ -66,9 +62,6 @@ function matchRequestAgainstSpec(
       };
     }
   }
-
-  // Debug: log what we tried
-  console.log(`[Match] MISS in "${spec.title}": ${requestMethod} relativePath="${relativePath}" (basePath="${spec.basePath}", ${methodEndpoints.length}/${spec.endpoints.length} endpoints with method ${requestMethod})`);
 
   return { matched: false, endpoint: null, pathParams: {}, confidence: 'none' };
 }
